@@ -55,7 +55,22 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 #elev-canvas{width:100%;height:70px;display:block}
 
 /* ── Progress ── */
-#progress-wrap{padding:0 16px 10px;display:none}
+#progress-wrap{
+  position:absolute;top:16px;left:50%;transform:translateX(-50%);
+  width:calc(100% - 32px);max-width:340px;z-index:11;
+  background:rgba(13,17,23,0.85);backdrop-filter:blur(12px);
+  border:1px solid var(--border);border-radius:14px;
+  padding:14px 18px 12px;display:none;
+  box-shadow:0 6px 20px rgba(0,0,0,0.4);
+}
+#fly-pause-btn{
+  position:absolute;left:50%;transform:translateX(-50%);bottom:-56px;
+  width:44px;height:44px;background:rgba(13,17,23,0.85);backdrop-filter:blur(12px);
+  border:1px solid var(--border);color:#fff;border-radius:50%;font-size:16px;
+  display:none;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 4px 15px rgba(0,0,0,0.3);z-index:12;transition:background 0.15s;
+}
+#fly-pause-btn:hover{background:var(--surface2);}
 .live-stats{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px;direction:rtl;}
 .text-val{font-weight:700;color:var(--text);}
 .prog-outer{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
@@ -106,6 +121,9 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     border-radius:14px;
   }
   #toggle-btn{display:block}
+  .mapboxgl-ctrl-bottom-left {
+    bottom: 80px !important; /* Push Mapbox controls above the collapsed panel */
+  }
 }
 </style>
 </head>
@@ -133,6 +151,16 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 
 <div id="map"></div>
 
+<div id="progress-wrap">
+  <button id="fly-pause-btn" onclick="toggleFlyPause()" title="השהייה/המשך"></button>
+  <div class="live-stats">
+    <div class="stat-dist-live">הושלם: <span id="live-dist-done" class="text-val">0.0</span> ק"מ</div>
+    <div class="stat-dist-live">נותר: <span id="live-dist-remain" class="text-val">0.0</span> ק"מ</div>
+  </div>
+  <div class="prog-outer"><div id="prog-fill"></div></div>
+  <div id="prog-label"></div>
+</div>
+
 <div id="panel">
   <div id="panel-header">
     <div>
@@ -151,14 +179,6 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     <div id="elev-wrap">
       <div class="section-label">פרופיל גובה</div>
       <canvas id="elev-canvas"></canvas>
-    </div>
-    <div id="progress-wrap">
-      <div class="live-stats">
-        <div class="stat-dist-live">הושלם: <span id="live-dist-done" class="text-val">0.0</span> ק"מ</div>
-        <div class="stat-dist-live">נותר: <span id="live-dist-remain" class="text-val">0.0</span> ק"מ</div>
-      </div>
-      <div class="prog-outer"><div id="prog-fill"></div></div>
-      <div id="prog-label"></div>
     </div>
     <div id="controls">
       <div class="btn-row">
@@ -201,6 +221,9 @@ var START = null, END = null;
 var TRAIL_GEOJSON = null;
 var ACCUMULATED_DISTS = [];
 var TOTAL_DISTANCE = 0;
+
+var flyPaused = false;
+var flyPauseTime = null;
 
 var STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -498,12 +521,26 @@ function getBearing(lat1, lon1, lat2, lon2) {
 function stopFly() {
   if (flyRafId) { cancelAnimationFrame(flyRafId); flyRafId = null; }
   flyStartTime = null;
+  flyPaused = false;
+  flyPauseTime = null;
+  document.getElementById('fly-pause-btn').style.display = 'none';
+
   var btn = document.getElementById('btn-fly');
   btn.textContent = '▶ סיור';
   btn.classList.remove('active');
   if (map && map.getSource('fly-pos')) {
     map.setLayoutProperty('fly-ring', 'visibility', 'none');
     map.setLayoutProperty('fly-dot',  'visibility', 'none');
+  }
+}
+
+function toggleFlyPause() {
+  flyPaused = !flyPaused;
+  var btn = document.getElementById('fly-pause-btn');
+  if (flyPaused) {
+    btn.textContent = '▶';
+  } else {
+    btn.textContent = '⏸';
   }
 }
 
@@ -530,6 +567,12 @@ function flyAlongTrail() {
 
   flyTotalDuration = TRAIL_COORDS.length * FLY_SEC_PER_PT * 1000;
   flyStartTime = null;
+  flyPaused = false;
+  flyPauseTime = null;
+
+  var pauseBtn = document.getElementById('fly-pause-btn');
+  pauseBtn.style.display = 'flex';
+  pauseBtn.textContent = '⏸';
 
   map.setLayoutProperty('fly-ring', 'visibility', 'visible');
   map.setLayoutProperty('fly-dot',  'visibility', 'visible');
@@ -540,6 +583,18 @@ function flyAlongTrail() {
 
   function tick(ts) {
     if (!flyStartTime) flyStartTime = ts;
+    
+    if (flyPaused) {
+      if (!flyPauseTime) flyPauseTime = ts;
+      flyRafId = requestAnimationFrame(tick);
+      return;
+    }
+
+    if (flyPauseTime) {
+      flyStartTime += (ts - flyPauseTime);
+      flyPauseTime = null;
+    }
+
     var elapsed = ts - flyStartTime;
     var t = Math.min(elapsed / flyTotalDuration, 1);
 
@@ -547,13 +602,9 @@ function flyAlongTrail() {
     var ptAhead = lerpCoord(Math.min(t + 0.003, 1));
     var bearing = getBearing(pt[0], pt[1], ptAhead[0], ptAhead[1]);
 
-    map.easeTo({
-      center: [pt[1], pt[0]],
-      pitch: 68,
-      bearing: bearing,
-      duration: 900,
-      easing: function(x){ return x; }
-    });
+    map.setCenter([pt[1], pt[0]]);
+    map.setPitch(68);
+    map.setBearing(bearing);
 
     if (map.getSource('fly-pos')) {
       map.getSource('fly-pos').setData({
