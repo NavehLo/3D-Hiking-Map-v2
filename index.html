@@ -427,11 +427,11 @@ function startMap() {
 function addTrailLayers() {
   if (map.getSource('trail')) return;
 
-  map.addSource('trail', { type: 'geojson', data: TRAIL_GEOJSON });
+  map.addSource('trail', { type: 'geojson', data: TRAIL_GEOJSON, lineMetrics: true });
   map.addLayer({
     id: 'trail-glow', type: 'line', source: 'trail',
     layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#f97316', 'line-width': 12, 'line-opacity': 0.2, 'line-blur': 6 }
+    paint: { 'line-color': '#f97316', 'line-width': 16, 'line-opacity': 0.45, 'line-blur': 5 }
   });
   map.addLayer({
     id: 'trail-line', type: 'line', source: 'trail',
@@ -439,7 +439,7 @@ function addTrailLayers() {
     paint: {
       'line-color': ['interpolate', ['linear'], ['line-progress'],
         0, '#ef4444', 0.35, '#f97316', 0.7, '#eab308', 1, '#22c55e'],
-      'line-width': 4, 'line-gradient': true
+      'line-width': 5, 'line-gradient': true
     }
   });
 
@@ -577,6 +577,8 @@ function flyAlongTrail() {
   map.setLayoutProperty('fly-ring', 'visibility', 'visible');
   map.setLayoutProperty('fly-dot',  'visibility', 'visible');
 
+  var currentBearing = null; // Used to smooth out the camera rotation
+
   if (map.getZoom() < 16) {
     map.zoomTo(16.5, { duration: 1500 });
   }
@@ -599,12 +601,25 @@ function flyAlongTrail() {
     var t = Math.min(elapsed / flyTotalDuration, 1);
 
     var pt   = lerpCoord(t);
-    var ptAhead = lerpCoord(Math.min(t + 0.003, 1));
-    var bearing = getBearing(pt[0], pt[1], ptAhead[0], ptAhead[1]);
+    var ptAhead = lerpCoord(Math.min(t + 0.005, 1)); // Look slightly further ahead
+    var targetBearing = getBearing(pt[0], pt[1], ptAhead[0], ptAhead[1]);
+
+    if (currentBearing === null) {
+      currentBearing = targetBearing;
+    }
+
+    // Wrap around logic for smooth rotation past 360 deg
+    var diff = targetBearing - currentBearing;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    targetBearing = currentBearing + diff;
+    
+    // Apply smoothing damping factor (e.g. 0.03 for very smooth)
+    currentBearing += (targetBearing - currentBearing) * 0.03;
 
     map.setCenter([pt[1], pt[0]]);
     map.setPitch(68);
-    map.setBearing(bearing);
+    map.setBearing(currentBearing);
 
     if (map.getSource('fly-pos')) {
       map.getSource('fly-pos').setData({
