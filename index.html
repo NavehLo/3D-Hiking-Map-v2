@@ -56,6 +56,8 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 
 /* ── Progress ── */
 #progress-wrap{padding:0 16px 10px;display:none}
+.live-stats{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px;direction:rtl;}
+.text-val{font-weight:700;color:var(--text);}
 .prog-outer{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
 #prog-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:2px;transition:width 0.4s}
 #prog-label{font-size:10px;color:var(--muted);margin-top:3px;direction:ltr;text-align:left}
@@ -151,6 +153,10 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
       <canvas id="elev-canvas"></canvas>
     </div>
     <div id="progress-wrap">
+      <div class="live-stats">
+        <div class="stat-dist-live">הושלם: <span id="live-dist-done" class="text-val">0.0</span> ק"מ</div>
+        <div class="stat-dist-live">נותר: <span id="live-dist-remain" class="text-val">0.0</span> ק"מ</div>
+      </div>
       <div class="prog-outer"><div id="prog-fill"></div></div>
       <div id="prog-label"></div>
     </div>
@@ -193,6 +199,8 @@ var lats = [], lons = [];
 var CENTER_LAT = 0, CENTER_LON = 0;
 var START = null, END = null;
 var TRAIL_GEOJSON = null;
+var ACCUMULATED_DISTS = [];
+var TOTAL_DISTANCE = 0;
 
 var STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -260,9 +268,12 @@ function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
 
 function calculateTrailStats(coords) {
   var distance = 0;
+  ACCUMULATED_DISTS = [0];
   for(var i=0; i<coords.length-1; i++) {
     distance += getDistanceFromLatLonInKm(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1]);
+    ACCUMULATED_DISTS.push(distance);
   }
+  TOTAL_DISTANCE = distance;
   return distance.toFixed(1);
 }
 
@@ -551,10 +562,15 @@ function flyAlongTrail() {
       });
     }
 
-    var pct = Math.round(t * 100);
+    var pct = (t * 100).toFixed(1);
+    var done = (t * TOTAL_DISTANCE).toFixed(1);
+    var remain = (TOTAL_DISTANCE - done).toFixed(1);
+
     document.getElementById('progress-wrap').style.display = 'block';
+    document.getElementById('live-dist-done').textContent = done;
+    document.getElementById('live-dist-remain').textContent = remain;
     document.getElementById('prog-fill').style.width = pct + '%';
-    document.getElementById('prog-label').textContent = pct + "% · גובה: " + Math.round(pt[2]) + "מ'";
+    document.getElementById('prog-label').innerHTML = pct + "% &middot; גובה: " + Math.round(pt[2]) + "מ'";
 
     if (t < 1) {
       flyRafId = requestAnimationFrame(tick);
@@ -593,9 +609,15 @@ function toggleGPS() {
       if (d < minDist) { minDist = d; closestIdx = i; }
     }
     var closest = TRAIL_COORDS[closestIdx];
-    var pct = Math.round(closestIdx / TRAIL_COORDS.length * 100);
+    var done = ACCUMULATED_DISTS[closestIdx] || 0;
+    var remain = TOTAL_DISTANCE - done;
+    if (remain < 0) remain = 0;
+    var pct = TOTAL_DISTANCE > 0 ? (done / TOTAL_DISTANCE * 100).toFixed(1) : 0;
+
     txt.textContent = "גובה: " + Math.round(closest[2]) + "מ' | " + pct + "% | ±" + acc + "מ'";
     document.getElementById('progress-wrap').style.display = 'block';
+    document.getElementById('live-dist-done').textContent = done.toFixed(1);
+    document.getElementById('live-dist-remain').textContent = remain.toFixed(1);
     document.getElementById('prog-fill').style.width = pct + '%';
     document.getElementById('prog-label').textContent = lat.toFixed(5) + ', ' + lon.toFixed(5);
     if (map && map.getSource('user-pos')) {
