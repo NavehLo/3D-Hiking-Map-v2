@@ -591,7 +591,7 @@ function toggleFPV() {
   if (isFPV) {
     btn.classList.add('active');
     if (!flyRafId && !gpsWatch) {
-      map.easeTo({ pitch: 74, zoom: 17.5, duration: 1000 });
+      map.easeTo({ pitch: 70, zoom: 17, duration: 1000 });
     }
   } else {
     btn.classList.remove('active');
@@ -718,17 +718,10 @@ function flyAlongTrail() {
     var smoothFactor = 1.0 - Math.exp(-dt * 0.003 * flySpeedMultiplier);
     currentBearing += (targetBearing - currentBearing) * smoothFactor;
 
+    // Only set center and bearing in the tick. 
+    // Setting pitch/zoom here overrides Mapbox's internal 3D collision resolution and causes rapid flickering on steep hills.
     map.setCenter([pt[1], pt[0]]);
     map.setBearing(currentBearing);
-    
-    var targetPitch = isFPV ? 74 : 68;
-    if (Math.abs(map.getPitch() - targetPitch) > 0.1) {
-      map.setPitch(map.getPitch() + (targetPitch - map.getPitch()) * smoothFactor * 2);
-    }
-    var targetZoom = isFPV ? 17.5 : 16.5;
-    if (isFPV && Math.abs(map.getZoom() - targetZoom) > 0.05) {
-      map.setZoom(map.getZoom() + (targetZoom - map.getZoom()) * smoothFactor * 2);
-    }
 
     if (map.getSource('fly-pos')) {
       if (isFPV) {
@@ -812,7 +805,7 @@ function toggleGPS() {
       var flyOpts = { center: [lon, lat], duration: 1000 };
       
       if (isFPV) {
-        flyOpts.pitch = 74;
+        flyOpts.pitch = 70;
         var heading = pos.coords.heading;
         if (heading === null || isNaN(heading)) {
           if (lastLat !== null && lastLon !== null && (lastLat !== lat || lastLon !== lon)) {
@@ -827,7 +820,7 @@ function toggleGPS() {
       }
 
       if (isFPV) {
-        flyOpts.zoom = 17.5;
+        flyOpts.zoom = 17;
       } else if (isFirstGPSUpdate && map.getZoom() < 16) {
         flyOpts.zoom = 16;
       }
