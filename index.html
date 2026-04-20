@@ -196,7 +196,6 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
       </div>
       <div class="btn-row">
         <button class="btn active" id="btn-3d" onclick="toggle3D()">3D ⛰</button>
-        <button class="btn" id="btn-fpv" onclick="toggleFPV()">🚶 זווית מבט המטייל</button>
       </div>
       <div class="btn-row" style="align-items:stretch;">
         <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
@@ -242,15 +241,10 @@ var TOTAL_DISTANCE = 0;
 
 var flyPaused = false;
 var flyPauseTime = null;
-var isFPV = false;
 
 var flyVirtualElapsed = 0;
 var flyLastTs = null;
 var flySpeedMultiplier = 1;
-
-var isCameraTransitioning = false;
-var cameraTransition = 0;
-var transStartZoom = 16, transStartPitch = 60;
 
 var STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -587,31 +581,6 @@ function toggle3D() {
   }
 }
 
-// ── FPV toggle ────────────────────────────────────────────────────────
-function toggleFPV() {
-  if (!map) return;
-  isFPV = !isFPV;
-  var btn = document.getElementById('btn-fpv');
-  if (isFPV) {
-    btn.classList.add('active');
-  } else {
-    btn.classList.remove('active');
-  }
-
-  if (flyRafId || gpsWatch) {
-    transStartZoom = map.getZoom();
-    transStartPitch = map.getPitch();
-    isCameraTransitioning = true;
-    cameraTransition = 0;
-  } else {
-    map.easeTo({ pitch: isFPV ? 80 : 60, zoom: isFPV ? 18.5 : 16, duration: 1000 });
-  }
-
-  if (map.getSource('fly-pos')) {
-    map.setLayoutProperty('fly-dot', 'visibility', isFPV ? 'none' : 'visible');
-    map.setLayoutProperty('fly-ring', 'visibility', isFPV ? 'none' : 'visible');
-  }
-}
 
 // ── Fly along trail ───────────────────────────────────────────────────
 function getBearing(lat1, lon1, lat2, lon2) {
@@ -734,31 +703,13 @@ function flyAlongTrail() {
     map.setCenter([pt[1], pt[0]]);
     map.setBearing(currentBearing);
 
-    if (isCameraTransitioning) {
-       cameraTransition += dt * 0.002; // Roughly 500ms transition
-       if (cameraTransition >= 1) isCameraTransitioning = false;
-       var ease = Math.min(cameraTransition, 1);
-       // Out-Cubic easing for smoother settling
-       var easeOut = 1 - Math.pow(1 - ease, 3);
-       
-       var tp = isFPV ? 80 : 60;
-       var tz = isFPV ? 18.5 : 16;
-       map.setPitch(transStartPitch + (tp - transStartPitch) * easeOut);
-       map.setZoom(transStartZoom + (tz - transStartZoom) * easeOut);
-    }
-
     if (map.getSource('fly-pos')) {
-      if (isFPV) {
-        map.setLayoutProperty('fly-ring', 'visibility', 'none');
-        map.setLayoutProperty('fly-dot',  'visibility', 'none');
-      } else {
-        map.setLayoutProperty('fly-ring', 'visibility', 'visible');
-        map.setLayoutProperty('fly-dot',  'visibility', 'visible');
-        map.getSource('fly-pos').setData({
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
-        });
-      }
+      map.setLayoutProperty('fly-ring', 'visibility', 'visible');
+      map.setLayoutProperty('fly-dot',  'visibility', 'visible');
+      map.getSource('fly-pos').setData({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
+      });
     }
 
     var pct = (t * 100).toFixed(1);
@@ -828,24 +779,14 @@ function toggleGPS() {
       
       var flyOpts = { center: [lon, lat], duration: 1000 };
       
-      if (isFPV) {
-        flyOpts.pitch = 80;
-        var heading = pos.coords.heading;
-        if (heading === null || isNaN(heading)) {
-          if (lastLat !== null && lastLon !== null && (lastLat !== lat || lastLon !== lon)) {
-            heading = getBearing(lastLat, lastLon, lat, lon);
-          } else {
-            heading = map.getBearing();
-          }
-        }
+      flyOpts.pitch = terrain3D ? 60 : 0;
+      
+      var heading = pos.coords.heading;
+      if (heading !== null && !isNaN(heading)) {
         flyOpts.bearing = heading;
-      } else {
-        flyOpts.pitch = terrain3D ? 60 : 0;
       }
 
-      if (isFPV) {
-        flyOpts.zoom = 18.5;
-      } else if (isFirstGPSUpdate && map.getZoom() < 16) {
+      if (isFirstGPSUpdate && map.getZoom() < 16) {
         flyOpts.zoom = 16;
       }
       
