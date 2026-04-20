@@ -178,7 +178,10 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     </div>
     <div id="elev-wrap">
       <div class="section-label">פרופיל גובה</div>
-      <canvas id="elev-canvas"></canvas>
+      <div style="position:relative;">
+        <canvas id="elev-canvas"></canvas>
+        <div id="elev-marker"></div>
+      </div>
     </div>
     <div id="controls">
       <div class="btn-row">
@@ -190,8 +193,15 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
         <button class="btn active" id="btn-3d" onclick="toggle3D()">3D ⛰</button>
         <button class="btn" id="btn-fpv" onclick="toggleFPV()">🚶 גוף ראשון</button>
       </div>
-      <div class="btn-row">
-        <button class="btn" id="btn-fly" onclick="flyAlongTrail()">▶ סיור</button>
+      <div class="btn-row" style="align-items:stretch;">
+        <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+          <button class="btn" id="btn-fly" onclick="flyAlongTrail()">▶ סיור</button>
+          <div id="fly-speed-controls" style="display:none; gap:4px;">
+            <button class="btn active" id="btn-speed-1" onclick="setFlySpeed(1)" style="flex:1">x1</button>
+            <button class="btn" id="btn-speed-2" onclick="setFlySpeed(2)" style="flex:1">x2</button>
+            <button class="btn" id="btn-speed-5" onclick="setFlySpeed(5)" style="flex:1">x5</button>
+          </div>
+        </div>
         <button class="btn" id="btn-gps" onclick="toggleGPS()">📍 מיקום חי</button>
       </div>
     </div>
@@ -228,6 +238,10 @@ var TOTAL_DISTANCE = 0;
 var flyPaused = false;
 var flyPauseTime = null;
 var isFPV = false;
+
+var flyVirtualElapsed = 0;
+var flyLastTs = null;
+var flySpeedMultiplier = 1;
 
 var STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -593,10 +607,11 @@ function getBearing(lat1, lon1, lat2, lon2) {
 
 function stopFly() {
   if (flyRafId) { cancelAnimationFrame(flyRafId); flyRafId = null; }
-  flyStartTime = null;
+  flyVirtualElapsed = 0;
+  flyLastTs = null;
   flyPaused = false;
-  flyPauseTime = null;
   document.getElementById('fly-pause-btn').style.display = 'none';
+  document.getElementById('fly-speed-controls').style.display = 'none';
 
   var btn = document.getElementById('btn-fly');
   btn.textContent = '▶ סיור';
@@ -615,6 +630,14 @@ function toggleFlyPause() {
   } else {
     btn.textContent = '⏸';
   }
+  // reset lastTs so it doesn't jump
+  flyLastTs = null;
+}
+
+function setFlySpeed(x) {
+  flySpeedMultiplier = x;
+  document.querySelectorAll('#fly-speed-controls .btn').forEach(function(b){ b.classList.remove('active'); });
+  document.getElementById('btn-speed-' + x).classList.add('active');
 }
 
 function lerpCoord(t) {
@@ -639,13 +662,16 @@ function flyAlongTrail() {
   btn.classList.add('active');
 
   flyTotalDuration = TRAIL_COORDS.length * FLY_SEC_PER_PT * 1000;
-  flyStartTime = null;
+  flyVirtualElapsed = 0;
+  flyLastTs = null;
   flyPaused = false;
-  flyPauseTime = null;
 
   var pauseBtn = document.getElementById('fly-pause-btn');
   pauseBtn.style.display = 'flex';
   pauseBtn.textContent = '⏸';
+  
+  var speedControls = document.getElementById('fly-speed-controls');
+  speedControls.style.display = 'flex';
 
   map.setLayoutProperty('fly-ring', 'visibility', 'visible');
   map.setLayoutProperty('fly-dot',  'visibility', 'visible');
@@ -657,21 +683,17 @@ function flyAlongTrail() {
   }
 
   function tick(ts) {
-    if (!flyStartTime) flyStartTime = ts;
+    if (!flyLastTs) flyLastTs = ts;
+    var dt = ts - flyLastTs;
+    flyLastTs = ts;
     
     if (flyPaused) {
-      if (!flyPauseTime) flyPauseTime = ts;
       flyRafId = requestAnimationFrame(tick);
       return;
     }
 
-    if (flyPauseTime) {
-      flyStartTime += (ts - flyPauseTime);
-      flyPauseTime = null;
-    }
-
-    var elapsed = ts - flyStartTime;
-    var t = Math.min(elapsed / flyTotalDuration, 1);
+    flyVirtualElapsed += dt * flySpeedMultiplier;
+    var t = Math.min(flyVirtualElapsed / flyTotalDuration, 1);
 
     var pt   = lerpCoord(t);
     var ptAhead = lerpCoord(Math.min(t + 0.015, 1)); // Look much further ahead to ignore micro-zigs
@@ -687,13 +709,20 @@ function flyAlongTrail() {
     while (diff < -180) diff += 360;
     targetBearing = currentBearing + diff;
     
-    // Apply very heavy smoothing damping factor for cinematic, non-nauseating turns
-    currentBearing += (targetBearing - currentBearing) * 0.01;
+    // FPS Independent smoothing
+    var smoothFactor = 1.0 - Math.exp(-dt * 0.003 * flySpeedMultiplier);
+    currentBearing += (targetBearing - currentBearing) * smoothFactor;
 
     map.setCenter([pt[1], pt[0]]);
-    map.setPitch(isFPV ? 80 : 68);
     map.setBearing(currentBearing);
-    if (isFPV) map.setZoom(18.5);
+    
+    var targetPitch = isFPV ? 80 : 68;
+    if (Math.abs(map.getPitch() - targetPitch) > 0.1) {
+      map.setPitch(map.getPitch() + (targetPitch - map.getPitch()) * smoothFactor * 2);
+    }
+    if (isFPV && Math.abs(map.getZoom() - 18.5) > 0.05) {
+      map.setZoom(map.getZoom() + (18.5 - map.getZoom()) * smoothFactor * 2);
+    }
 
     if (map.getSource('fly-pos')) {
       if (isFPV) {
@@ -718,6 +747,7 @@ function flyAlongTrail() {
     document.getElementById('live-dist-remain').textContent = remain;
     document.getElementById('prog-fill').style.width = pct + '%';
     document.getElementById('prog-label').innerHTML = pct + "% &middot; גובה: " + Math.round(pt[2]) + "מ'";
+    updateElevMarker(t);
 
     if (t < 1) {
       flyRafId = requestAnimationFrame(tick);
@@ -768,6 +798,8 @@ function toggleGPS() {
     document.getElementById('live-dist-remain').textContent = remain.toFixed(1);
     document.getElementById('prog-fill').style.width = pct + '%';
     document.getElementById('prog-label').textContent = lat.toFixed(5) + ', ' + lon.toFixed(5);
+    updateElevMarker(done / TOTAL_DISTANCE);
+    
     if (map && map.getSource('user-pos')) {
       map.getSource('user-pos').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] } });
       
@@ -805,18 +837,15 @@ function toggleGPS() {
 
 // ── Jump in Tour ──────────────────────────────────────────────────────
 function jumpTour(e) {
-  if (!flyStartTime && !flyPauseTime) return; // Not active
+  if (flyRafId === null) return; // Not active
   var rect = e.currentTarget.getBoundingClientRect();
   var x = e.clientX - rect.left;
   var pct = 1 - (x / rect.width); // RTL, 0% is on the right
   if (pct < 0) pct = 0; if (pct > 1) pct = 1;
   
-  var targetElapsed = pct * flyTotalDuration;
+  flyVirtualElapsed = pct * flyTotalDuration;
   
   if (flyPaused) {
-    flyPauseTime = performance.now();
-    flyStartTime = flyPauseTime - targetElapsed;
-    
     // Jump visually right now even if paused
     var pt = lerpCoord(pct);
     map.setCenter([pt[1], pt[0]]);
@@ -826,12 +855,22 @@ function jumpTour(e) {
     document.getElementById('live-dist-remain').textContent = remain;
     document.getElementById('prog-fill').style.width = (pct * 100).toFixed(1) + '%';
     document.getElementById('prog-label').innerHTML = (pct * 100).toFixed(1) + "% &middot; גובה: " + Math.round(pt[2]) + "מ'";
-  } else {
-    flyStartTime = performance.now() - targetElapsed;
+    updateElevMarker(pct);
   }
 }
 
 // ── Elevation chart ───────────────────────────────────────────────────
+function updateElevMarker(pct) {
+  var marker = document.getElementById('elev-marker');
+  var canvas = document.getElementById('elev-canvas');
+  if (!marker || !canvas) return;
+  if (pct === null || isNaN(pct)) { marker.style.display = 'none'; return; }
+  marker.style.display = 'block';
+  var padL = 28, padR = 4;
+  var cw = canvas.offsetWidth - padL - padR;
+  var xOffset = padL + (pct * cw);
+  marker.style.left = xOffset + 'px'; 
+}
 function drawElevChart() {
   var canvas = document.getElementById('elev-canvas');
   if (!canvas) return;
