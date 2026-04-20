@@ -73,7 +73,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 #fly-pause-btn:hover{background:var(--surface2);}
 .live-stats{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px;direction:rtl;}
 .text-val{font-weight:700;color:var(--text);}
-.prog-outer{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-outer{height:4px;background:var(--border);border-radius:2px;overflow:hidden;cursor:pointer}
 #prog-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:2px;transition:width 0.4s}
 #prog-label{font-size:10px;color:var(--muted);margin-top:3px;direction:ltr;text-align:left}
 
@@ -157,7 +157,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
     <div class="stat-dist-live">הושלם: <span id="live-dist-done" class="text-val">0.0</span> ק"מ</div>
     <div class="stat-dist-live">נותר: <span id="live-dist-remain" class="text-val">0.0</span> ק"מ</div>
   </div>
-  <div class="prog-outer"><div id="prog-fill"></div></div>
+  <div class="prog-outer" onclick="jumpTour(event)"><div id="prog-fill"></div></div>
   <div id="prog-label"></div>
 </div>
 
@@ -305,6 +305,80 @@ function calculateTrailStats(coords) {
 }
 
 // ── Start Flow ────────────────────────────────────────────────────────
+function extractAndLoadTrailData(file, xmlDoc, token) {
+  if (file.name.toLowerCase().endsWith('.kml')) {
+    TRAIL_COORDS = parseKML(xmlDoc);
+  } else {
+    TRAIL_COORDS = parseGPX(xmlDoc);
+  }
+  
+  if(TRAIL_COORDS.length === 0) {
+    alert('לא נמצאו נקודות ציון בקובץ.');
+    document.getElementById('token-submit').disabled = false;
+    document.getElementById('loading-msg').style.display = 'none';
+    return;
+  }
+
+  var trailName = file.name.replace(/\.(gpx|kml)$/i, '');
+  try {
+    localStorage.setItem('mapbox_token', token);
+    localStorage.setItem('saved_trail_name', trailName);
+    localStorage.setItem('saved_trail_coords', JSON.stringify(TRAIL_COORDS));
+  } catch(e) { console.warn("Could not save to localStorage", e); }
+
+  loadTrailData(trailName, token);
+}
+
+function loadTrailData(trailName, token) {
+  ELES = TRAIL_COORDS.map(function(p){ return p[2]; });
+  MIN_ELE = Math.min.apply(null, ELES);
+  MAX_ELE = Math.max.apply(null, ELES);
+  lats = TRAIL_COORDS.map(function(p){ return p[0]; });
+  lons = TRAIL_COORDS.map(function(p){ return p[1]; });
+  CENTER_LAT = (Math.min.apply(null,lats) + Math.max.apply(null,lats)) / 2;
+  CENTER_LON = (Math.min.apply(null,lons) + Math.max.apply(null,lons)) / 2;
+  START = TRAIL_COORDS[0];
+  END   = TRAIL_COORDS[TRAIL_COORDS.length - 1];
+  
+  TRAIL_GEOJSON = {
+    type: 'Feature',
+    geometry: {
+      type: 'LineString',
+      coordinates: TRAIL_COORDS.map(function(p){ return [p[1], p[0], p[2]]; })
+    }
+  };
+
+  document.querySelector('.trail-name').textContent = trailName;
+  document.getElementById('stat-dist').innerHTML = calculateTrailStats(TRAIL_COORDS) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> ק"מ</span>';
+  document.getElementById('stat-pts').textContent = TRAIL_COORDS.length;
+  document.getElementById('stat-min-ele').innerHTML = Math.round(MIN_ELE) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> מ\'</span>';
+  document.getElementById('stat-max-ele').innerHTML = Math.round(MAX_ELE) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> מ\'</span>';
+
+  document.getElementById('panel').style.display = 'block';
+  document.getElementById('loading-msg').style.display = 'block';
+
+  if (!window.mapboxgl) {
+    var script = document.createElement('script');
+    script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js';
+    script.onload = function() {
+      mapboxgl.accessToken = token;
+      mapboxgl.setRTLTextPlugin('https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.3.0/mapbox-gl-rtl-text.js', null, true);
+      document.getElementById('token-screen').style.display = 'none';
+      startMap();
+    };
+    script.onerror = function() {
+      alert('לא ניתן לטעון את Mapbox. בדוק חיבור לאינטרנט.');
+      document.getElementById('token-submit').disabled = false;
+      document.getElementById('loading-msg').style.display = 'none';
+    };
+    document.head.appendChild(script);
+  } else {
+    mapboxgl.accessToken = token;
+    document.getElementById('token-screen').style.display = 'none';
+    startMap();
+  }
+}
+
 document.getElementById('token-submit').addEventListener('click', function() {
   var token = document.getElementById('token-input').value.trim();
   var fileInput = document.getElementById('gpx-input');
@@ -328,64 +402,7 @@ document.getElementById('token-submit').addEventListener('click', function() {
     var fileData = e.target.result;
     var parser = new DOMParser();
     var xmlDoc = parser.parseFromString(fileData, "text/xml");
-    
-    if (file.name.toLowerCase().endsWith('.kml')) {
-      TRAIL_COORDS = parseKML(xmlDoc);
-    } else {
-      TRAIL_COORDS = parseGPX(xmlDoc);
-    }
-    
-    if(TRAIL_COORDS.length === 0) {
-      alert('לא נמצאו נקודות ציון בקובץ.');
-      document.getElementById('token-submit').disabled = false;
-      document.getElementById('loading-msg').style.display = 'none';
-      return;
-    }
-
-    // Refresh data variables
-    ELES = TRAIL_COORDS.map(function(p){ return p[2]; });
-    MIN_ELE = Math.min.apply(null, ELES);
-    MAX_ELE = Math.max.apply(null, ELES);
-    lats = TRAIL_COORDS.map(function(p){ return p[0]; });
-    lons = TRAIL_COORDS.map(function(p){ return p[1]; });
-    CENTER_LAT = (Math.min.apply(null,lats) + Math.max.apply(null,lats)) / 2;
-    CENTER_LON = (Math.min.apply(null,lons) + Math.max.apply(null,lons)) / 2;
-    START = TRAIL_COORDS[0];
-    END   = TRAIL_COORDS[TRAIL_COORDS.length - 1];
-    
-    TRAIL_GEOJSON = {
-      type: 'Feature',
-      geometry: {
-        type: 'LineString',
-        coordinates: TRAIL_COORDS.map(function(p){ return [p[1], p[0], p[2]]; })
-      }
-    };
-
-    // Update UI Stats
-    document.querySelector('.trail-name').textContent = file.name.replace(/\.(gpx|kml)$/i, '');
-    document.getElementById('stat-dist').innerHTML = calculateTrailStats(TRAIL_COORDS) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> ק"מ</span>';
-    document.getElementById('stat-pts').textContent = TRAIL_COORDS.length;
-    document.getElementById('stat-min-ele').innerHTML = Math.round(MIN_ELE) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> מ\'</span>';
-    document.getElementById('stat-max-ele').innerHTML = Math.round(MAX_ELE) + '<span style="font-size:12px;font-weight:400;color:var(--muted)"> מ\'</span>';
-
-    // Show panel
-    document.getElementById('panel').style.display = 'block';
-
-    // Load Mapbox
-    var script = document.createElement('script');
-    script.src = 'https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js';
-    script.onload = function() {
-      mapboxgl.accessToken = token;
-      mapboxgl.setRTLTextPlugin('https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-rtl-text/v0.3.0/mapbox-gl-rtl-text.js', null, true);
-      document.getElementById('token-screen').style.display = 'none';
-      startMap();
-    };
-    script.onerror = function() {
-      alert('לא ניתן לטעון את Mapbox. בדוק חיבור לאינטרנט.');
-      document.getElementById('token-submit').disabled = false;
-      document.getElementById('loading-msg').style.display = 'none';
-    };
-    document.head.appendChild(script);
+    extractAndLoadTrailData(file, xmlDoc, token);
   };
   
   reader.onerror = function() {
@@ -395,6 +412,40 @@ document.getElementById('token-submit').addEventListener('click', function() {
   };
   
   reader.readAsText(file);
+});
+
+window.addEventListener('DOMContentLoaded', function() {
+  var savedToken = localStorage.getItem('mapbox_token');
+  if (savedToken) {
+    document.getElementById('token-input').value = savedToken;
+  }
+  
+  var savedTrailName = localStorage.getItem('saved_trail_name');
+  var savedTrailStr = localStorage.getItem('saved_trail_coords');
+  if (savedToken && savedTrailName && savedTrailStr) {
+    var btn = document.createElement('button');
+    btn.style.marginTop = '12px';
+    btn.style.width = '100%';
+    btn.style.padding = '12px';
+    btn.style.background = 'var(--surface2)';
+    btn.style.border = '1px solid var(--border)';
+    btn.style.borderRadius = '10px';
+    btn.style.color = '#fff';
+    btn.style.fontFamily = 'var(--font)';
+    btn.style.fontSize = '14px';
+    btn.style.cursor = 'pointer';
+    btn.innerHTML = 'המשך עם מסלול אחרון: ' + savedTrailName;
+    btn.onclick = function() {
+      try {
+        TRAIL_COORDS = JSON.parse(savedTrailStr);
+        document.getElementById('token-submit').disabled = true;
+        loadTrailData(savedTrailName, savedToken);
+      } catch(e) {
+        console.error("Saved trail data corrupted", e);
+      }
+    };
+    document.getElementById('token-card').appendChild(btn);
+  }
 });
 
 // ── Init map ──────────────────────────────────────────────────────────
@@ -521,7 +572,7 @@ function toggleFPV() {
   if (isFPV) {
     btn.classList.add('active');
     if (!flyRafId && !gpsWatch) {
-      map.easeTo({ pitch: 85, zoom: 17.5, duration: 1000 });
+      map.easeTo({ pitch: 80, zoom: 18.5, duration: 1000 });
     }
   } else {
     btn.classList.remove('active');
@@ -640,9 +691,9 @@ function flyAlongTrail() {
     currentBearing += (targetBearing - currentBearing) * 0.01;
 
     map.setCenter([pt[1], pt[0]]);
-    map.setPitch(isFPV ? 85 : 68);
+    map.setPitch(isFPV ? 80 : 68);
     map.setBearing(currentBearing);
-    if (isFPV) map.setZoom(20.5);
+    if (isFPV) map.setZoom(18.5);
 
     if (map.getSource('fly-pos')) {
       if (isFPV) {
@@ -723,7 +774,7 @@ function toggleGPS() {
       var flyOpts = { center: [lon, lat], duration: 1000 };
       
       if (isFPV) {
-        flyOpts.pitch = 85;
+        flyOpts.pitch = 80;
         var heading = pos.coords.heading;
         if (heading === null || isNaN(heading)) {
           if (lastLat !== null && lastLon !== null && (lastLat !== lat || lastLon !== lon)) {
@@ -738,7 +789,7 @@ function toggleGPS() {
       }
 
       if (isFPV) {
-        flyOpts.zoom = 18;
+        flyOpts.zoom = 18.5;
       } else if (isFirstGPSUpdate && map.getZoom() < 16) {
         flyOpts.zoom = 16;
       }
@@ -750,6 +801,34 @@ function toggleGPS() {
   }, function(err) {
     txt.textContent = 'שגיאת GPS: ' + err.message;
   }, { enableHighAccuracy: true, maximumAge: 5000 });
+}
+
+// ── Jump in Tour ──────────────────────────────────────────────────────
+function jumpTour(e) {
+  if (!flyStartTime && !flyPauseTime) return; // Not active
+  var rect = e.currentTarget.getBoundingClientRect();
+  var x = e.clientX - rect.left;
+  var pct = 1 - (x / rect.width); // RTL, 0% is on the right
+  if (pct < 0) pct = 0; if (pct > 1) pct = 1;
+  
+  var targetElapsed = pct * flyTotalDuration;
+  
+  if (flyPaused) {
+    flyPauseTime = performance.now();
+    flyStartTime = flyPauseTime - targetElapsed;
+    
+    // Jump visually right now even if paused
+    var pt = lerpCoord(pct);
+    map.setCenter([pt[1], pt[0]]);
+    var done = (pct * TOTAL_DISTANCE).toFixed(1);
+    var remain = (TOTAL_DISTANCE - done).toFixed(1);
+    document.getElementById('live-dist-done').textContent = done;
+    document.getElementById('live-dist-remain').textContent = remain;
+    document.getElementById('prog-fill').style.width = (pct * 100).toFixed(1) + '%';
+    document.getElementById('prog-label').innerHTML = (pct * 100).toFixed(1) + "% &middot; גובה: " + Math.round(pt[2]) + "מ'";
+  } else {
+    flyStartTime = performance.now() - targetElapsed;
+  }
 }
 
 // ── Elevation chart ───────────────────────────────────────────────────
