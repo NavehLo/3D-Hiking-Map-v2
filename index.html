@@ -623,7 +623,7 @@ function flyAlongTrail() {
     var t = Math.min(elapsed / flyTotalDuration, 1);
 
     var pt   = lerpCoord(t);
-    var ptAhead = lerpCoord(Math.min(t + 0.005, 1)); // Look slightly further ahead
+    var ptAhead = lerpCoord(Math.min(t + 0.015, 1)); // Look much further ahead to ignore micro-zigs
     var targetBearing = getBearing(pt[0], pt[1], ptAhead[0], ptAhead[1]);
 
     if (currentBearing === null) {
@@ -636,19 +636,26 @@ function flyAlongTrail() {
     while (diff < -180) diff += 360;
     targetBearing = currentBearing + diff;
     
-    // Apply smoothing damping factor (e.g. 0.03 for very smooth)
-    currentBearing += (targetBearing - currentBearing) * 0.03;
+    // Apply very heavy smoothing damping factor for cinematic, non-nauseating turns
+    currentBearing += (targetBearing - currentBearing) * 0.01;
 
     map.setCenter([pt[1], pt[0]]);
     map.setPitch(isFPV ? 85 : 68);
     map.setBearing(currentBearing);
-    if (isFPV) map.setZoom(18);
+    if (isFPV) map.setZoom(20.5);
 
     if (map.getSource('fly-pos')) {
-      map.getSource('fly-pos').setData({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
-      });
+      if (isFPV) {
+        map.setLayoutProperty('fly-ring', 'visibility', 'none');
+        map.setLayoutProperty('fly-dot',  'visibility', 'none');
+      } else {
+        map.setLayoutProperty('fly-ring', 'visibility', 'visible');
+        map.setLayoutProperty('fly-dot',  'visibility', 'visible');
+        map.getSource('fly-pos').setData({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
+        });
+      }
     }
 
     var pct = (t * 100).toFixed(1);
