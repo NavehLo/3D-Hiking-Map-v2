@@ -594,14 +594,22 @@ function toggleFPV() {
   var btn = document.getElementById('btn-fpv');
   if (isFPV) {
     btn.classList.add('active');
-    if (!flyRafId && !gpsWatch) {
-      map.easeTo({ pitch: 70, zoom: 17, duration: 1000 });
-    }
   } else {
     btn.classList.remove('active');
-    if (!flyRafId && !gpsWatch) {
-      map.easeTo({ pitch: terrain3D ? 60 : 0, duration: 1000 });
-    }
+  }
+
+  if (flyRafId || gpsWatch) {
+    transStartZoom = map.getZoom();
+    transStartPitch = map.getPitch();
+    isCameraTransitioning = true;
+    cameraTransition = 0;
+  } else {
+    map.easeTo({ pitch: isFPV ? 80 : 60, zoom: isFPV ? 18.5 : 16, duration: 1000 });
+  }
+
+  if (map.getSource('fly-pos')) {
+    map.setLayoutProperty('fly-dot', 'visibility', isFPV ? 'none' : 'visible');
+    map.setLayoutProperty('fly-ring', 'visibility', isFPV ? 'none' : 'visible');
   }
 }
 
