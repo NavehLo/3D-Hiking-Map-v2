@@ -651,6 +651,7 @@ function flyAlongTrail() {
   flyVirtualElapsed = 0;
   flyLastTs = null;
   flyPaused = false;
+  var lastGeoJsonUpdate = 0;
 
   var pauseBtn = document.getElementById('fly-pause-btn');
   pauseBtn.style.display = 'flex';
@@ -672,6 +673,9 @@ function flyAlongTrail() {
     if (!flyLastTs) flyLastTs = ts;
     var dt = ts - flyLastTs;
     flyLastTs = ts;
+
+    // Prevent extreme time jumps (e.g. from tab freezing) that cause teleporting
+    if (dt > 100) dt = 16; 
     
     if (flyPaused) {
       flyRafId = requestAnimationFrame(tick);
@@ -706,10 +710,15 @@ function flyAlongTrail() {
     if (map.getSource('fly-pos')) {
       map.setLayoutProperty('fly-ring', 'visibility', 'visible');
       map.setLayoutProperty('fly-dot',  'visibility', 'visible');
-      map.getSource('fly-pos').setData({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
-      });
+      
+      // Throttle Geometry Updates to prevent Mapbox Worker crashing/flashes
+      if (ts - lastGeoJsonUpdate > 40) {
+        map.getSource('fly-pos').setData({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [pt[1], pt[0]] }
+        });
+        lastGeoJsonUpdate = ts;
+      }
     }
 
     var pct = (t * 100).toFixed(1);
