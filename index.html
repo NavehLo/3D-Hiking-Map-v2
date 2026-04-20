@@ -188,6 +188,9 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
       </div>
       <div class="btn-row">
         <button class="btn active" id="btn-3d" onclick="toggle3D()">3D ⛰</button>
+        <button class="btn" id="btn-fpv" onclick="toggleFPV()">🚶 גוף ראשון</button>
+      </div>
+      <div class="btn-row">
         <button class="btn" id="btn-fly" onclick="flyAlongTrail()">▶ סיור</button>
         <button class="btn" id="btn-gps" onclick="toggleGPS()">📍 מיקום חי</button>
       </div>
@@ -224,6 +227,7 @@ var TOTAL_DISTANCE = 0;
 
 var flyPaused = false;
 var flyPauseTime = null;
+var isFPV = false;
 
 var STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -500,12 +504,30 @@ function toggle3D() {
   var btn = document.getElementById('btn-3d');
   if (terrain3D) {
     map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.8 });
-    map.easeTo({ pitch: 60, duration: 800 });
+    map.easeTo({ pitch: isFPV ? 85 : 60, duration: 800 });
     btn.classList.add('active'); btn.textContent = '3D ⛰';
   } else {
     map.setTerrain(null);
     map.easeTo({ pitch: 0, duration: 800 });
     btn.classList.remove('active'); btn.textContent = '2D 🗺';
+  }
+}
+
+// ── FPV toggle ────────────────────────────────────────────────────────
+function toggleFPV() {
+  if (!map) return;
+  isFPV = !isFPV;
+  var btn = document.getElementById('btn-fpv');
+  if (isFPV) {
+    btn.classList.add('active');
+    if (!flyRafId && !gpsWatch) {
+      map.easeTo({ pitch: 85, zoom: 17.5, duration: 1000 });
+    }
+  } else {
+    btn.classList.remove('active');
+    if (!flyRafId && !gpsWatch) {
+      map.easeTo({ pitch: terrain3D ? 60 : 0, duration: 1000 });
+    }
   }
 }
 
@@ -618,8 +640,9 @@ function flyAlongTrail() {
     currentBearing += (targetBearing - currentBearing) * 0.03;
 
     map.setCenter([pt[1], pt[0]]);
-    map.setPitch(68);
+    map.setPitch(isFPV ? 85 : 68);
     map.setBearing(currentBearing);
+    if (isFPV) map.setZoom(18);
 
     if (map.getSource('fly-pos')) {
       map.getSource('fly-pos').setData({
@@ -666,6 +689,7 @@ function toggleGPS() {
   txt.textContent = 'ממתין לאות GPS...';
   dot.classList.add('on'); btn.classList.add('gps-on');
   var isFirstGPSUpdate = true;
+  var lastLat = null, lastLon = null;
   gpsWatch = navigator.geolocation.watchPosition(function(pos) {
     var lat = pos.coords.latitude, lon = pos.coords.longitude;
     var acc = Math.round(pos.coords.accuracy);
@@ -688,12 +712,33 @@ function toggleGPS() {
     document.getElementById('prog-label').textContent = lat.toFixed(5) + ', ' + lon.toFixed(5);
     if (map && map.getSource('user-pos')) {
       map.getSource('user-pos').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] } });
+      
       var flyOpts = { center: [lon, lat], duration: 1000 };
-      if (isFirstGPSUpdate && map.getZoom() < 16) {
+      
+      if (isFPV) {
+        flyOpts.pitch = 85;
+        var heading = pos.coords.heading;
+        if (heading === null || isNaN(heading)) {
+          if (lastLat !== null && lastLon !== null && (lastLat !== lat || lastLon !== lon)) {
+            heading = getBearing(lastLat, lastLon, lat, lon);
+          } else {
+            heading = map.getBearing();
+          }
+        }
+        flyOpts.bearing = heading;
+      } else {
+        flyOpts.pitch = terrain3D ? 60 : 0;
+      }
+
+      if (isFPV) {
+        flyOpts.zoom = 18;
+      } else if (isFirstGPSUpdate && map.getZoom() < 16) {
         flyOpts.zoom = 16;
       }
+      
+      lastLat = lat; lastLon = lon;
       isFirstGPSUpdate = false;
-      map.flyTo(flyOpts);
+      map.easeTo(flyOpts);
     }
   }, function(err) {
     txt.textContent = 'שגיאת GPS: ' + err.message;
